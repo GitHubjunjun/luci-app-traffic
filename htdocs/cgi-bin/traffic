@@ -42,6 +42,7 @@ case "$MODE" in
 		;;
 	1d)
 		# 自然日视图：?mode=1d&d=YYYY-MM-DD（缺省为今天）
+		# L3 现在是每分钟一条、且存的是「字节」，所以 MULT=1
 		# 多取前 1 小时用于算出 00:00 这一档的增量
 		D=$(printf '%s' "$QS" | sed -n 's/.*[?&]d=\([0-9-]*\).*/\1/p')
 		[ -z "$D" ] && D=$(date +%Y-%m-%d)
@@ -49,7 +50,7 @@ case "$MODE" in
 		FILE=$FLASH/l3.dat
 		FROM=$((DS - 3600))
 		TO=$((DS + 86400))
-		MULT=1048576
+		MULT=1
 		;;
 	30d)
 		FILE=$FLASH/l4.dat
@@ -135,18 +136,27 @@ else
 		BODY=$(awk -F, -v s="$FROM" -v e="$TO" -v m="$MULT" '
 			NF >= 5 && $1 >= s && $1 <= e {
 				if (n++) printf ","
-				printf "[%s,%s,%s,%.0f,%.0f]", $1, $2, $3, $4*m, $5*m
+				if (NF >= 7)
+					printf "[%s,%s,%s,%.0f,%.0f,%.0f,%.0f]", $1, $2, $3, $4*m, $5*m, $6, $7
+				else
+					printf "[%s,%s,%s,%.0f,%.0f,%.0f,%.0f]", $1, $2, $3, $4*m, $5*m, $2, $3
 			}
 		' "$FILE")
 	fi
 	# 追加「今天」的实时增量（由 l3 小时档末值-首值算出），使本月/近30天每小时增长
 	if [ "$APPEND_TODAY" = "1" ]; then
-		TR=$(awk -F, -v s="$TODAY_TS" -v m="$MULT" '
-			$1 < s  { fdb=$4; fub=$5; hb=1 }        # 零点前最后一条 = 当天起点基线
-			$1 >= s { ldb=$4; lub=$5; lts=$1; n++ } # 零点后最后一条 = 当前累计
+		TR=$(awk -F, -v s="$TODAY_TS" -v m=1 '
+			{
+				if ($1 < s) { pdb=$4; pub=$5; hb=1; next }   # 零点前最后一条 = 当天基线
+				if (hb == 0) { pdb=$4; pub=$5; hb=1; lts=$1; n++; next }
+				# 计数器归零（接口重连）时按"当前值"算，避免出现负增量
+				tdn += ($4 >= pdb) ? ($4 - pdb) : $4
+				tup += ($5 >= pub) ? ($5 - pub) : $5
+				pdb=$4; pub=$5; lts=$1; n++
+			}
 			END {
-				if (hb == 0 || n == 0) exit
-				printf "[%d,0,0,%.0f,%.0f]", lts, (ldb-fdb)*m, (lub-fub)*m
+				if (n == 0) exit
+				printf "[%d,0,0,%.0f,%.0f]", lts, tdn*m, tup*m
 			}
 		' "$FLASH/l3.dat")
 		if [ -n "$TR" ]; then

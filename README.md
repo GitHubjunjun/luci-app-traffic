@@ -24,12 +24,14 @@
   - `1 小时`：分钟级曲线
   - `1 天`：**自然日 00:00–24:00**，可左右切换今天 / 昨天 / 前天
   - `近 30 天`、`本月`、`上月`
-  - `年`：可按年份切换
+  - `年`：固定 12 列（1~12 月），可按年份切换
 - **五层降采样**：内存（tmpfs）+ flash 混合存储，按**真实时钟边界**聚合
+- **分钟级落盘**：`1 天` 的数据每分钟写一次 flash，断电最多丢 1 分钟
+- **峰值 = 窗口内最高的 1 秒速率**（上下行分开），不是「总量 ÷ 时长」
 - **实时性分级**：`本月` / `近 30 天` 含当天实时数据，**每小时**增长；`年` 视图**每天**增长
 - **纯 SVG 前端**：无 CDN、无任何外部依赖，自动跟随系统深色 / 浅色主题
 - **安全升级**：只覆盖代码、升级前快照数据、格式版本校验、行数校验失败自动回滚
-- **资源占用极低**：CPU ≈ 1.3%、内存 ≈ 1.1 MB、flash 写入 ≈ 730 KB/年
+- **资源占用低**：CPU ≈ 1.3%、内存 ≈ 1.1 MB、flash 写入约 150 MB/年（分钟级落盘的代价）
 
 ## 数据分层
 
@@ -37,29 +39,31 @@
 |---|---|---|---|---|---|
 | L1 | 1 秒 | 180 | 3 分钟 | tmpfs（内存） | 3 分钟视图 |
 | L2 | 60 秒 | 60 | 1 小时 | tmpfs（内存） | 1 小时视图 |
-| L3 | 1 小时 | 73 | 3 天 | flash | 1 天视图；日聚合的数据源 |
+| L3 | **60 秒** | **4320** | **3 天** | flash | 1 天视图；日聚合的数据源 |
 | L4 | 1 天 | 62 | 62 天 | flash | 近 30 天 / 本月 / 上月 |
 | L5 | 1 月 | 永久 | 不限 | flash | 年视图 |
 
-数据格式（CSV，每行约 50 字节）：
+数据格式（CSV）：
 
 ```text
-ts,dn_rate,up_rate,dn_bytes,up_bytes
+ts,dn_rate,up_rate,dn_bytes,up_bytes[,dn_peak,up_peak]
 ```
 
+- **第 6/7 列** = 该周期内「最高的 1 秒速率」，用于峰值卡片；老格式没有这两列时自动退回用均值
 - **L1 / L2 / L3** 存**累计字节**，流量由相邻两条记录做差得到
 - **L4 / L5** 存**当期增量**，每条记录自包含，只有一条数据也能正确显示
+- 累计值出现**回绕**（接口重连 / 重启导致计数器归零）时按「当前值」计算增量，不会算出负数
 
 ## 聚合时机
 
 不依赖进程内部计时器，而是按**真实时钟边界**触发：
 
-- **每跨过一个整点** → 把最近 1 小时的 L2 数据聚合成 1 条 L3
-- **每跨过一天** → 把最近 24 小时的 L3 数据聚合成 1 条 L4，并在月初结算上月到 L5
+- **每分钟** → 把最新一条 L2 记录镜像落盘到 L3（所以断电最多丢 1 分钟）
+- **每跨过一天** → 把最近 24 小时的 L3 聚合成 1 条 L4，并在月初结算上月到 L5
 
-因此**守护进程重启不会打乱记录节奏**，也不会出现"重启后要从头再攒 1 小时"的问题。
+因此**守护进程重启不会打乱记录节奏**。
 
-> 聚合采用**时间窗过滤**（按时间戳筛行）而非固定取最后 N 行，能自动排除重启前残留的过期数据，避免污染平均值。
+`1 天` 视图里每个小时点的速率 = **该小时累计流量 ÷ 3600 秒**。整点刚过时数值很小，随着分钟累积逐步上升，整点走满后即为该小时的真实平均——这样不会出现「小时开头几分钟被放大成尖峰」的问题。
 
 ### 时区
 
@@ -175,12 +179,14 @@ A lightweight traffic monitor for a single WAN interface on OpenWrt. It reads th
   - `1 hour` — per-minute curve
   - `1 day` — **natural day 00:00–24:00**, switch between today / yesterday / the day before
   - `Last 30 days`, `This month`, `Last month`
-  - `Year` — with year switching
+  - `Year` — fixed 12 columns (Jan–Dec), with year switching
 - **Five-layer downsampling** across tmpfs and flash, aggregated at **real clock boundaries**
+- **Minute-level durability** — the 1-day data is flushed to flash every minute, so a power cut loses at most 1 minute
+- **Peak = the highest 1-second rate** within the window (down and up separately), not "total ÷ duration"
 - **Tiered freshness** — `This month` / `Last 30 days` include today's live data and grow **hourly**; `Year` grows **daily**
 - **Pure SVG frontend** — no CDN, no external dependencies, follows the system dark / light theme
 - **Safe upgrades** — code-only overwrite, pre-upgrade data snapshot, format version guard, automatic rollback on data loss
-- **Very low overhead** — ~1.3 % CPU, ~1.1 MB RAM, ~730 KB flash writes per year
+- **Low overhead** — ~1.3 % CPU, ~1.1 MB RAM, roughly 150 MB flash writes per year (the price of minute-level durability)
 
 ### Data layers
 
@@ -188,27 +194,31 @@ A lightweight traffic monitor for a single WAN interface on OpenWrt. It reads th
 |---|---|---|---|---|---|
 | L1 | 1 s | 180 | 3 min | tmpfs (RAM) | 3-minute view |
 | L2 | 60 s | 60 | 1 hour | tmpfs (RAM) | 1-hour view |
-| L3 | 1 hour | 73 | 3 days | flash | 1-day view; source for daily rollup |
+| L3 | **60 s** | **4320** | **3 days** | flash | 1-day view; source for daily rollup |
 | L4 | 1 day | 62 | 62 days | flash | Last 30 days / this month / last month |
 | L5 | 1 month | forever | unlimited | flash | Year view |
 
-Record format (CSV, ~50 bytes per row):
+Record format (CSV):
 
 ```text
-ts,dn_rate,up_rate,dn_bytes,up_bytes
+ts,dn_rate,up_rate,dn_bytes,up_bytes[,dn_peak,up_peak]
 ```
 
+- **Fields 6/7** hold the highest 1-second rate within that period; older 5-field rows fall back to the average
 - **L1 / L2 / L3** store **cumulative bytes**; traffic is derived from the difference between consecutive rows
 - **L4 / L5** store **per-period deltas**, so every row is self-contained and a single row still renders correctly
+- When a cumulative counter **wraps** (interface reconnect or reboot resets it), the delta is taken as the current value instead, so totals never go negative
 
 ### Aggregation timing
 
 No internal tick counter — aggregation is driven by **real clock boundaries**:
 
-- **Every hour boundary** → the last hour of L2 is rolled up into one L3 row
+- **Every minute** → the newest L2 row is mirrored to L3 on flash (so a power cut costs at most 1 minute)
 - **Every day boundary** → the last 24 hours of L3 is rolled up into one L4 row, and the previous month is settled into L5 at month change
 
-As a result, **restarting the daemon never breaks the recording rhythm**, and there is no "wasted hour re-accumulating after a restart" problem.
+As a result, **restarting the daemon never breaks the recording rhythm**.
+
+In the 1-day view, each hourly point's rate is **that hour's accumulated traffic ÷ 3600 s**. It starts small right after the hour begins and rises as minutes accumulate, reaching the true hourly average once the hour completes — which avoids the artificial spike caused by dividing by a handful of elapsed minutes.
 
 > Aggregation uses a **time-window filter** (rows selected by timestamp) instead of a fixed "last N rows", so stale rows left over from before a restart are excluded automatically and cannot skew the averages.
 

@@ -1,10 +1,13 @@
 #!/bin/sh
 # trafficd.sh - WAN traffic collector for luci-app-traffic
-# Data format (CSV): ts,dn_rate,up_rate,dn_bytes,up_bytes
+# Data format (CSV):
+#   ts,dn_rate,up_rate,dn_bytes,up_bytes[,dn_peak,up_peak]
+#   第 6/7 字段 = 该周期内「最高的 1 秒速率」(B/s)，用于"峰值"卡片；
+#   老格式（5 字段）没有这两列，读取时退回用第 2/3 字段。
 #   L1: 1s     x 180  -> 3 min   (tmpfs)
 #   L2: 60s    x 60   -> 1 hour  (tmpfs)
-#   L3: 1h     x 73   -> 3 days  (flash)   <- 每跨过一个整点写入一条
-#     多留几天是为了「1天」视图能左右切到昨天/前天
+#   L3: 60s    x 4320 -> 3 days  (flash)   <- 每分钟一条（断电最多丢 1 分钟）
+#     保留 3 天是为了「1天」视图能左右切到今天/昨天/前天
 #   L4: 1d     x 62   -> 62 days (flash)   <- 每跨过一天写入一条
 #   L5: monthly, never pruned    (flash)
 #
@@ -17,7 +20,8 @@ IFACE=${IFACE:-wan}
 
 L1_KEEP=180
 L2_KEEP=60
-L3_KEEP=73
+L3_KEEP=4320          # 3 天 × 1440 分钟
+L3_SLACK=1440         # 允许再攒 1 天才裁剪，避免频繁重写整个文件（省 flash）
 L4_KEEP=62
 
 mkdir -p "$DIR_TMP" "$DIR_FLASH"
@@ -37,12 +41,16 @@ read_counters() {
 
 # agg <src> <dst> <take> <keep> <div>
 # 取 src 末尾 take 行聚合为一条写入 dst（分钟级 l1->l2 用）
+# 第 6/7 字段记录本周期内「最高的 1 秒速率」：l1 本身是 1s 采样，直接取最大值
 agg() {
   tail -n "$3" "$1" | awk -F, -v d="${5:-1}" '
-    { sd+=$2; su+=$3; ts=$1; db=$4; ub=$5; c++ }
+    { sd+=$2; su+=$3; ts=$1; db=$4; ub=$5
+      if ($2 > mxd) mxd = $2
+      if ($3 > mxu) mxu = $3
+      c++ }
     END {
       if (c==0) exit
-      printf "%.0f,%.0f,%.0f,%.0f,%.0f\n", ts, sd/c, su/c, db/d, ub/d
+      printf "%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n", ts, sd/c, su/c, db/d, ub/d, mxd, mxu
     }' >> "$2"
 
   cnt=$(wc -l < "$2")
@@ -58,10 +66,16 @@ agg_window() {
   now=$(date +%s)
   from=$((now - $3))
   awk -F, -v s="$from" -v d="${5:-1}" '
-    $1 >= s { sd+=$2; su+=$3; ts=$1; db=$4; ub=$5; c++ }
+    $1 >= s { sd+=$2; su+=$3; ts=$1; db=$4; ub=$5
+      # 峰值透传：子行若带第 6/7 字段就用它（该分钟的 1s 峰值），老格式退回均值
+      pd = (NF >= 7) ? $6 : $2
+      pu = (NF >= 7) ? $7 : $3
+      if (pd > mxd) mxd = pd
+      if (pu > mxu) mxu = pu
+      c++ }
     END {
       if (c==0) exit
-      printf "%.0f,%.0f,%.0f,%.0f,%.0f\n", ts-1, sd/c, su/c, db/d, ub/d
+      printf "%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n", ts-1, sd/c, su/c, db/d, ub/d, mxd, mxu
     }' "$1" >> "$2"
 
   cnt=$(wc -l < "$2")
@@ -78,13 +92,23 @@ agg_window_delta() {
   from=$((now - $3))
   awk -F, -v s="$from" -v d="${5:-1}" '
     $1 >= s {
-      if (first == 0) { fdb=$4; fub=$5; first=1 }
-      ldb=$4; lub=$5; lts=$1
-      sdn+=$2; sup+=$3; c++
+      if (first == 0) { pdb=$4; pub=$5; first=1 }
+      else {
+        # 接口计数器可能因重连/重启归零：回绕时按"当前值"算，而不是算成负数
+        tdn += ($4 >= pdb) ? ($4 - pdb) : $4
+        tup += ($5 >= pub) ? ($5 - pub) : $5
+        pdb=$4; pub=$5
+      }
+      sdn+=$2; sup+=$3
+      pd = (NF >= 7) ? $6 : $2
+      pu = (NF >= 7) ? $7 : $3
+      if (pd > mxd) mxd = pd
+      if (pu > mxu) mxu = pu
+      lts=$1; c++
     }
     END {
       if (c == 0) exit
-      printf "%.0f,%.0f,%.0f,%.0f,%.0f\n", lts-1, sdn/c, sup/c, (ldb-fdb)/d, (lub-fub)/d
+      printf "%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n", lts-1, sdn/c, sup/c, tdn/d, tup/d, mxd, mxu
     }' "$1" >> "$2"
 
   cnt=$(wc -l < "$2")
@@ -139,7 +163,6 @@ prev_ts=$(date +%s)
 c1=0
 
 # 边界跟踪：初始化为当前值，避免启动时误写一条
-LAST_HOUR=$(date +%Y%m%d%H)
 LAST_DAY=$(date +%Y%m%d)
 
 logger -t trafficd "started (iface=$IFACE tz=${STAT_TZ:-system})"
@@ -174,20 +197,23 @@ while true; do
   if [ "$c1" -ge 60 ]; then
     c1=0
     agg "$DIR_TMP/l1.dat" "$DIR_TMP/l2.dat" 60 "$L2_KEEP" 1
+
+    # ---- 同时把这一分钟落盘到 L3（flash）----
+    # 这样断电最多丢 1 分钟，而不是整整 1 小时。
+    # L3 存「累计字节」，日档靠相邻差值算量，所以直接镜像 l2 的最后一行即可。
+    tail -n 1 "$DIR_TMP/l2.dat" >> "$DIR_FLASH/l3.dat"
+    cnt3=$(wc -l < "$DIR_FLASH/l3.dat")
+    if [ "$cnt3" -gt $((L3_KEEP + L3_SLACK)) ]; then
+      tail -n "$L3_KEEP" "$DIR_FLASH/l3.dat" > "$DIR_FLASH/l3.dat.tmp" \
+        && mv "$DIR_FLASH/l3.dat.tmp" "$DIR_FLASH/l3.dat"
+    fi
   fi
 
-  # ---- L2 -> L3：跨过整点触发（与进程启动时刻无关）----
-  CUR_HOUR=$(date +%Y%m%d%H)
-  if [ "$CUR_HOUR" != "$LAST_HOUR" ]; then
-    agg_window "$DIR_TMP/l2.dat" "$DIR_FLASH/l3.dat" 3600 "$L3_KEEP" 1048576
-    LAST_HOUR=$CUR_HOUR
-    logger -t trafficd "hour boundary -> L3 record appended"
-  fi
-
-  # ---- L3 -> L4：跨过一天触发（整点判定在前，保证最后 1 小时已入 L3）----
+  # ---- L3 -> L4：跨过一天触发 ----
   CUR_DAY=$(date +%Y%m%d)
   if [ "$CUR_DAY" != "$LAST_DAY" ]; then
-    agg_window_delta "$DIR_FLASH/l3.dat" "$DIR_FLASH/l4.dat" 86400 "$L4_KEEP" 1
+    # L3 是字节，L4 统一存 MB，所以这里除以 1048576
+    agg_window_delta "$DIR_FLASH/l3.dat" "$DIR_FLASH/l4.dat" 86400 "$L4_KEEP" 1048576
     LAST_DAY=$CUR_DAY
     logger -t trafficd "day boundary -> L4 record appended"
     check_month

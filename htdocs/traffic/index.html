@@ -89,15 +89,15 @@ svg{display:block;width:100%;height:250px}
   </div>
 
   <div class="cards" id="cards">
-    <div class="card">
-      <div class="k">本期流量</div>
-      <div class="v dn">↓ <span id="mDn">--</span></div>
-      <div class="v up">↑ <span id="mUp">--</span></div>
-    </div>
     <div class="card" id="peakCard">
       <div class="k">峰值</div>
       <div class="v dn">↓ <span id="pDn">--</span></div>
       <div class="v up">↑ <span id="pUp">--</span></div>
+    </div>
+    <div class="card">
+      <div class="k">本期流量</div>
+      <div class="v dn">↓ <span id="mDn">--</span></div>
+      <div class="v up">↑ <span id="mUp">--</span></div>
     </div>
     <div class="card">
       <div class="k">平均速率</div>
@@ -187,9 +187,8 @@ function dLabelSet(){
 function prepBars(){
   bars = [];
   if (mode === 'year'){
-    var cy = new Date().getFullYear();
-    var maxM = (year === cy) ? new Date().getMonth() : 11;
-    for (var m = 0; m <= maxM; m++){
+    // 年视图固定 12 列（1~12 月），当年前面月份放数据，未来月份留空
+    for (var m = 0; m <= 11; m++){
       bars.push({t:0, dn:0, up:0, label: (m+1)+'月', mkey:m});
     }
     rows.forEach(function(r){
@@ -215,24 +214,42 @@ function prepBars(){
     var dayStart = Math.floor(d0.getTime() / 1000);
     slots1d = [];
     for (var h = 0; h < 24; h++){
-      slots1d.push({h:h, dn:0, up:0, rdn:0, rup:0, has:false, label:pad2(h)+':00'});
+      slots1d.push({h:h, dn:0, up:0, rsum:0, usum:0, rcnt:0, pmax:0, pmaxUp:0,
+                    rdn:0, rup:0, pdn:0, pup:0, has:false, label:pad2(h)+':00'});
     }
-    // rows 首行是"前一天最后一小时"，用于算出 00:00 这一档的增量
+    // rows 首行是"前一天最后一个采样"，用于算出 00:00 这一档的增量
     for (var j=1; j<rows.length; j++){
       var ts = rows[j][0];
       if (ts < dayStart || ts >= dayStart + 86400) continue;
       // 减 1 秒：若记录时间戳恰好落在整点（如 09:00:00），其增量属于上一小时
       var hh = Math.floor((ts - dayStart - 1) / 3600);
       if (hh < 0 || hh > 23) continue;
-      var dd = rows[j][3] - rows[j-1][3];
-      var du = rows[j][4] - rows[j-1][4];
-      if (dd < 0) dd = 0;
-      if (du < 0) du = 0;
-      slots1d[hh].dn += dd;
-      slots1d[hh].up += du;
-      slots1d[hh].rdn = rows[j][1] * 8 / 1e6;
-      slots1d[hh].rup = rows[j][2] * 8 / 1e6;
-      slots1d[hh].has = true;
+      // 计数器归零（WAN 重连/重启）时按"当前值"算增量，而不是算成负数丢弃
+      var dd = (rows[j][3] >= rows[j-1][3]) ? (rows[j][3] - rows[j-1][3]) : rows[j][3];
+      var du = (rows[j][4] >= rows[j-1][4]) ? (rows[j][4] - rows[j-1][4]) : rows[j][4];
+      var s1 = slots1d[hh];
+      s1.dn += dd;
+      s1.up += du;
+      // L3 现在是「分钟级」，一小时内有 60 条 → 速率取平均、峰值取最大
+      s1.rsum += rows[j][1];
+      s1.usum += rows[j][2];
+      s1.rcnt++;
+      var pd1 = (rows[j].length > 6) ? rows[j][5] : rows[j][1];
+      var pu1 = (rows[j].length > 6) ? rows[j][6] : rows[j][2];
+      if (pd1 > s1.pmax) s1.pmax = pd1;
+      if (pu1 > s1.pmaxUp) s1.pmaxUp = pu1;
+      s1.has = true;
+    }
+    for (var z = 0; z < 24; z++){
+      var sz = slots1d[z];
+      if (sz.rcnt > 0){
+        // 速率 = 该小时累计流量 ÷ 3600 秒（等价于「流量 ÷ 60 分钟」）
+        // 固定按整小时算，不按"已走分钟数"，否则当前这一小时会被放大成尖峰
+        sz.rdn = sz.dn / 3600 * 8 / 1e6;
+        sz.rup = sz.up / 3600 * 8 / 1e6;
+        sz.pdn = sz.pmax * 8 / 1e6;
+        sz.pup = sz.pmaxUp * 8 / 1e6;
+      }
     }
     return;
   }
@@ -241,6 +258,8 @@ function prepBars(){
   var endDate = new Date();
 
   if (mode === 'thisMonth'){
+    // 本月固定铺满整月：endDate 指向当月最后一天，再倒推生成 1 号 ~ 月末 的完整槽位
+    endDate = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 0);
     slotCount = endDate.getDate();
   } else if (mode === 'lastMonth'){
     var lm = new Date();
@@ -301,8 +320,10 @@ function applyStats(){
       if (!sl.has) continue;
       any=true; nSpan++;
       td += sl.dn; tu += sl.up;
-      if (sl.rdn > mxDn1) mxDn1 = sl.rdn;
-      if (sl.rup > mxUp1) mxUp1 = sl.rup;
+      var ppd = (sl.pdn !== undefined) ? sl.pdn : sl.rdn;
+      var ppu = (sl.pup !== undefined) ? sl.pup : sl.rup;
+      if (ppd > mxDn1) mxDn1 = ppd;
+      if (ppu > mxUp1) mxUp1 = ppu;
     }
     if (!any) return zeroOut();
     span = nSpan * 3600;
@@ -323,15 +344,23 @@ function applyStats(){
   if (isLine){
     if (rows.length < 2){ return zeroOut(); }
     for (var i=1;i<rows.length;i++){
-      var db = rows[i][3] - rows[i-1][3];
-      var ub = rows[i][4] - rows[i-1][4];
-      if (db < 0) db = 0;
-      if (ub < 0) ub = 0;
+      // 计数器归零（WAN 重连）时按"当前值"算，避免负值被丢弃导致少算
+      var db = (rows[i][3] >= rows[i-1][3]) ? (rows[i][3] - rows[i-1][3]) : rows[i][3];
+      var ub = (rows[i][4] >= rows[i-1][4]) ? (rows[i][4] - rows[i-1][4]) : rows[i][4];
       td += db;
       tu += ub;
-      dnRates.push(rows[i][1] * 8 / 1e6);
-      upRates.push(rows[i][2] * 8 / 1e6);
     }
+    // 峰值 = 统计窗口内「最高的 1 秒速率」（上下行分开）
+    // L2/L3 行带第 6/7 字段（该周期内的 1s 峰值）；L1（3分钟）本身就是 1s 采样，直接用均值列
+    var mxDnP = 0, mxUpP = 0;
+    for (var p=0;p<rows.length;p++){
+      var pd = (rows[p].length > 6) ? rows[p][5] : rows[p][1];
+      var pu = (rows[p].length > 6) ? rows[p][6] : rows[p][2];
+      if (pd > mxDnP) mxDnP = pd;
+      if (pu > mxUpP) mxUpP = pu;
+    }
+    dnRates = [mxDnP * 8 / 1e6];
+    upRates = [mxUpP * 8 / 1e6];
     span = (rows[rows.length-1][0]-rows[0][0]) || 1;
   } else {
     if (!bars.length){ return zeroOut(); }
@@ -341,9 +370,22 @@ function applyStats(){
       dnRates.push(bars[j].dn);
       upRates.push(bars[j].up);
     }
-    span = (mode === 'year')
-      ? (bars.length * 30 * 86400)
-      : ((bars[bars.length-1].t - bars[0].t) || 86400);
+    // 平均速率的时间基准：
+    //   年 = 各月按 30 天估算；本月 = 月初到现在已过去的时间（不能拿整月天数，否则被稀释）
+    if (mode === 'year'){
+      // 当年按「1月1日到现在」算，往年按整年算；固定 12 列后不能直接用 12×30 天
+      if (year === new Date().getFullYear()){
+        var y0 = new Date(year, 0, 1);
+        span = Math.max(3600, Math.floor(Date.now()/1000) - Math.floor(y0.getTime()/1000));
+      } else {
+        span = 365 * 86400;
+      }
+    } else if (mode === 'thisMonth'){
+      var ms0 = new Date(); ms0.setDate(1); ms0.setHours(0, 0, 0, 0);
+      span = Math.max(3600, Math.floor(Date.now()/1000) - Math.floor(ms0.getTime()/1000));
+    } else {
+      span = (bars[bars.length-1].t - bars[0].t) || 86400;
+    }
   }
 
   document.getElementById('mDn').textContent = fmtB(td);

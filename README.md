@@ -41,8 +41,10 @@
 | L1 | 1 秒 | 180 | 3 分钟 | tmpfs（内存） | 3 分钟视图 |
 | L2 | 60 秒 | 60 | 1 小时 | tmpfs（内存） | 1 小时视图 |
 | L3 | **60 秒** | **4320** | **3 天** | flash | 1 天视图；日聚合的数据源 |
-| L4 | 1 天 | 62 | 62 天 | flash | 近 30 天 / 本月 / 上月 |
+| L4 | 1 天 | 93 | 约 3 个月 | flash | 近 30 天 / 月视图 |
 | L5 | 1 月 | 永久 | 不限 | flash | 年视图 |
+
+> **保留期**：分钟档 3 天、日档约 3 个月（月视图最多回看 3 个月）；月汇总档保留给年视图长期使用。
 
 数据格式（CSV）：
 
@@ -197,8 +199,10 @@ A lightweight traffic monitor for a single WAN interface on OpenWrt. It reads th
 | L1 | 1 s | 180 | 3 min | tmpfs (RAM) | 3-minute view |
 | L2 | 60 s | 60 | 1 hour | tmpfs (RAM) | 1-hour view |
 | L3 | **60 s** | **4320** | **3 days** | flash | 1-day view; source for daily rollup |
-| L4 | 1 day | 62 | 62 days | flash | Last 30 days / this month / last month |
+| L4 | 1 day | 93 | about 3 months | flash | Last 30 days / month view |
 | L5 | 1 month | forever | unlimited | flash | Year view |
+
+> **Retention**: minute layer 3 days, daily layer about 3 months (the month view goes back at most 3 months); the monthly rollup is kept long-term for the year view.
 
 Record format (CSV):
 

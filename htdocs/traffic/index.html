@@ -498,6 +498,25 @@ function placeDots1d(h){
   _chartCtx.dotUp.setAttribute('opacity', 1);
 }
 
+// 悬停时把当前柱高亮（其余淡化），一眼看出 tooltip 对应哪根
+function highlightBar(idx){
+  if (!_chartCtx || !_chartCtx.barRects) return;
+  var rs = _chartCtx.barRects;
+  for (var i=0;i<rs.length;i++){
+    var op = (i === idx) ? '1' : '0.25';
+    rs[i][0].setAttribute('opacity', op);
+    rs[i][1].setAttribute('opacity', op);
+  }
+}
+function resetBarHighlight(){
+  if (!_chartCtx || !_chartCtx.barRects) return;
+  var rs = _chartCtx.barRects;
+  for (var i=0;i<rs.length;i++){
+    rs[i][0].setAttribute('opacity', '1');
+    rs[i][1].setAttribute('opacity', '1');
+  }
+}
+
 function drawHourTicks(svg, H, P, iw){
   var maxLb = Math.max(2, Math.floor(iw / 62));
   var step = Math.max(1, Math.ceil(24 / maxLb));
@@ -673,20 +692,27 @@ function draw(){
     var gap = iw/n2;
     var bw = Math.max(2, gap*0.62);
 
+    var barRects = [];
     bars.forEach(function(b, i){
       var cx = P.l + gap*i + gap/2;
       var hDn = ih*(b.dn/s2.div)/yM2;
       var hUp = ih*(b.up/s2.div)/yM2;
       var yb = P.t + ih;
-      svg.appendChild(el('rect', {
+      var rDn = el('rect', {
         x:(cx-bw/2).toFixed(1), y:(yb-hDn).toFixed(1),
-        width:bw.toFixed(1), height:Math.max(0,hDn).toFixed(1), fill:'var(--dn)'
-      }));
-      svg.appendChild(el('rect', {
+        width:bw.toFixed(1), height:Math.max(0,hDn).toFixed(1), fill:'var(--dn)',
+        style:'transition:opacity .18s'
+      });
+      var rUp = el('rect', {
         x:(cx-bw/2).toFixed(1), y:(yb-hDn-hUp).toFixed(1),
-        width:bw.toFixed(1), height:Math.max(0,hUp).toFixed(1), fill:'var(--up)'
-      }));
+        width:bw.toFixed(1), height:Math.max(0,hUp).toFixed(1), fill:'var(--up)',
+        style:'transition:opacity .18s'
+      });
+      svg.appendChild(rDn); svg.appendChild(rUp);
+      barRects.push([rDn, rUp]);
     });
+    // 记录柱子引用，供悬停时高亮当前柱
+    _chartCtx = { barRects: barRects };
 
     var skip2 = Math.max(1, Math.ceil((n2-1) / (maxLb-1)));
     bars.forEach(function(b, i){
@@ -858,6 +884,7 @@ function refreshTip(){
       _chartCtx.dotDn.setAttribute('opacity', 0);
       _chartCtx.dotUp.setAttribute('opacity', 0);
     }
+    highlightBar(idx);
     var b = bars[idx];
     tip.innerHTML =
       '<div class="h">' + b.label + '</div>' +
@@ -896,6 +923,7 @@ function refreshTip(){
     mouseCx = -1;
     mouseCy = -1;
     tip.style.display = 'none';
+    resetBarHighlight();
     if (_chartCtx && _chartCtx.dotDn){
       _chartCtx.dotDn.setAttribute('opacity', 0);
       _chartCtx.dotUp.setAttribute('opacity', 0);
@@ -930,7 +958,8 @@ document.getElementById('dNext').onclick = function(){
   if (dayOff < 0){ dayOff++; dLabelSet(); load(); }
 };
 document.getElementById('mPrev').onclick = function(){
-  if (monthOff > -12){ monthOff--; mLabelSet(); load(); }
+  // 只保留 3 个月：本月 / 上月 / 上上月
+  if (monthOff > -2){ monthOff--; mLabelSet(); load(); }
 };
 document.getElementById('mNext').onclick = function(){
   if (monthOff < 0){ monthOff++; mLabelSet(); load(); }

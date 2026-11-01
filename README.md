@@ -19,11 +19,12 @@
 
 ## 特性
 
-- **7 个时间维度**
+- **6 个时间维度**
   - `3 分钟`：1 秒采样，支持实时刷新开关
   - `1 小时`：分钟级曲线
-  - `1 天`：**自然日 00:00–24:00**，可左右切换今天 / 昨天 / 前天
-  - `近 30 天`、`本月`、`上月`
+  - `1 天`：**自然日 00:00–24:00 的小时柱状图**，可左右切换今天 / 昨天 / 前天，**保留峰值卡片**
+  - `近 30 天`
+  - `月`：整月柱状图，可左右翻月（本月 / 上月 / 更早）
   - `年`：固定 12 列（1~12 月），可按年份切换
 - **五层降采样**：内存（tmpfs）+ flash 混合存储，按**真实时钟边界**聚合
 - **分钟级落盘**：`1 天` 的数据每分钟写一次 flash，断电最多丢 1 分钟
@@ -174,11 +175,12 @@ A lightweight traffic monitor for a single WAN interface on OpenWrt. It reads th
 
 ### Features
 
-- **7 time ranges**
+- **6 time ranges**
   - `3 min` — 1-second sampling, optional live refresh
   - `1 hour` — per-minute curve
-  - `1 day` — **natural day 00:00–24:00**, switch between today / yesterday / the day before
-  - `Last 30 days`, `This month`, `Last month`
+  - `1 day` — **hourly bars across a natural day 00:00–24:00**, switch between today / yesterday / the day before; the peak card is kept
+  - `Last 30 days`
+  - `Month` — full-month bars, step back through months
   - `Year` — fixed 12 columns (Jan–Dec), with year switching
 - **Five-layer downsampling** across tmpfs and flash, aggregated at **real clock boundaries**
 - **Minute-level durability** — the 1-day data is flushed to flash every minute, so a power cut loses at most 1 minute

@@ -73,13 +73,17 @@ svg{display:block;width:100%;height:250px}
       <button data-m="1d">1 天</button>
       <span class="sep"></span>
       <button data-m="30d">近 30 天</button>
-      <button data-m="thisMonth">本月</button>
-      <button data-m="lastMonth">上月</button>
+      <button data-m="month">月</button>
       <button data-m="year">年</button>
       <span id="dayBox" style="display:none;gap:3px;align-items:center">
         <button id="dPrev" style="padding:4px 7px">◀</button>
         <span id="dLabel" style="font-size:12px;font-weight:600;min-width:64px;text-align:center">今天</span>
         <button id="dNext" style="padding:4px 7px">▶</button>
+      </span>
+      <span id="monthBox" style="display:none;gap:3px;align-items:center">
+        <button id="mPrev" style="padding:4px 7px">◀</button>
+        <span id="mLabel" style="font-size:12px;font-weight:600;min-width:64px;text-align:center">本月</span>
+        <button id="mNext" style="padding:4px 7px">▶</button>
       </span>
       <span id="yearBox" style="display:none;gap:3px;align-items:center">
         <button id="yPrev" style="padding:4px 7px">◀</button>
@@ -116,12 +120,14 @@ svg{display:block;width:100%;height:250px}
 
 <script>
 var MODES = {
-  '3min':{type:'line'}, '1h':{type:'line'}, '1d':{type:'line'},
-  '30d':{type:'bar'}, 'thisMonth':{type:'bar'}, 'lastMonth':{type:'bar'}, 'year':{type:'bar'}
+  '3min':{type:'line'}, '1h':{type:'line'},
+  '1d':{type:'bar', peak:true},              // 天：柱形图，但保留峰值
+  '30d':{type:'bar'}, 'month':{type:'bar'}, 'year':{type:'bar'}
 };
 var mode = '3min';
 var year = new Date().getFullYear();
 var dayOff = 0;              // 1天视图：0=今天 -1=昨天 -2=前天
+var monthOff = 0;            // 月视图：0=本月 -1=上月 -2=上上月
 var rows = [];
 var bars = [];
 var slots1d = [];            // 1天视图的 24 个小时槽
@@ -182,6 +188,18 @@ function dLabelSet(){
   if (dayOff === 0) el2.textContent = '今天';
   else if (dayOff === -1) el2.textContent = '昨天';
   else el2.textContent = dayStr(dayOff).slice(5);
+}
+function monthStr(off){
+  var d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + off);
+  return d.getFullYear() + '-' + pad2(d.getMonth()+1);
+}
+function mLabelSet(){
+  var el3 = document.getElementById('mLabel');
+  if (monthOff === 0) el3.textContent = '本月';
+  else if (monthOff === -1) el3.textContent = '上月';
+  else el3.textContent = monthStr(monthOff);
 }
 
 function prepBars(){
@@ -251,24 +269,41 @@ function prepBars(){
         sz.pup = sz.pmaxUp * 8 / 1e6;
       }
     }
+    // 转成柱形图数据（单位 GB），没数据的小时也保留柱位
+    bars = slots1d.map(function(s){
+      return {t:0, dn:s.dn/1e9, up:s.up/1e9, label:s.label, has:s.has};
+    });
+    return;
+  }
+
+  if (mode === 'month'){
+    // 月视图：按所选月份铺满整月天数（1 号 ~ 月末）
+    var mb = new Date();
+    mb.setDate(1);
+    mb.setMonth(mb.getMonth() + monthOff);
+    var my = mb.getFullYear(), mm = mb.getMonth();
+    var mLast = new Date(my, mm + 1, 0).getDate();
+    bars = [];
+    for (var dd2 = 1; dd2 <= mLast; dd2++){
+      bars.push({t: Math.floor(new Date(my, mm, dd2).getTime()/1000),
+                 key: my + '-' + pad2(mm+1) + '-' + pad2(dd2),
+                 dn:0, up:0, label: (mm+1) + '/' + dd2});
+    }
+    for (var kk=0; kk<rows.length; kk++){
+      var mv1 = rows[kk][3]/1e9, mv2 = rows[kk][4]/1e9;
+      if (mv1 < 0) mv1 = 0;
+      if (mv2 < 0) mv2 = 0;
+      var mt = new Date(rows[kk][0]*1000);
+      var mk = mt.getFullYear() + '-' + pad2(mt.getMonth()+1) + '-' + pad2(mt.getDate());
+      for (var sk=0; sk<bars.length; sk++){
+        if (bars[sk].key === mk){ bars[sk].dn += mv1; bars[sk].up += mv2; break; }
+      }
+    }
     return;
   }
 
   var slotCount = 30;
   var endDate = new Date();
-
-  if (mode === 'thisMonth'){
-    // 本月固定铺满整月：endDate 指向当月最后一天，再倒推生成 1 号 ~ 月末 的完整槽位
-    endDate = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 0);
-    slotCount = endDate.getDate();
-  } else if (mode === 'lastMonth'){
-    var lm = new Date();
-    lm.setDate(1);
-    lm.setMonth(lm.getMonth() - 1);
-    var lastDay = new Date(lm.getFullYear(), lm.getMonth() + 1, 0).getDate();
-    slotCount = lastDay;
-    endDate = new Date(lm.getFullYear(), lm.getMonth(), lastDay);
-  }
 
   var daySlots = [];
   for (var i2 = slotCount - 1; i2 >= 0; i2--){
@@ -380,9 +415,14 @@ function applyStats(){
       } else {
         span = 365 * 86400;
       }
-    } else if (mode === 'thisMonth'){
-      var ms0 = new Date(); ms0.setDate(1); ms0.setHours(0, 0, 0, 0);
-      span = Math.max(3600, Math.floor(Date.now()/1000) - Math.floor(ms0.getTime()/1000));
+    } else if (mode === 'month'){
+      if (monthOff === 0){
+        // 本月：按月初到现在已过的时间
+        var ms0 = new Date(); ms0.setDate(1); ms0.setHours(0, 0, 0, 0);
+        span = Math.max(3600, Math.floor(Date.now()/1000) - Math.floor(ms0.getTime()/1000));
+      } else {
+        span = bars.length * 86400;
+      }
     } else {
       span = (bars[bars.length-1].t - bars[0].t) || 86400;
     }
@@ -424,7 +464,7 @@ function zeroOut(){
 
   var peakCard = document.getElementById('peakCard');
   var sumLine = document.getElementById('sumLine');
-  if (MODES[mode].type === 'line'){
+  if (MODES[mode].type === 'line' || MODES[mode].peak){
     peakCard.innerHTML = '<div class="k">峰值</div><div class="v dn">↓ --</div><div class="v up">↑ --</div>';
     sumLine.style.display = '';
     sumLine.innerHTML = '本期合计 <b>--</b>';
@@ -558,11 +598,6 @@ function draw(){
   svg.innerHTML = '';
   var iw = W-P.l-P.r, ih = H-P.t-P.b;
 
-  if (mode === '1d'){
-    drawDay1d(svg, W, H, P, iw, ih);
-    return;
-  }
-
   if (MODES[mode].type === 'line'){
     if (rows.length < 2){ emptyState(svg, W, H); return; }
     var dnA = rows.map(function(r){ return r[1] * 8 / 1e6; });
@@ -627,6 +662,7 @@ function draw(){
     if (!bars.length){ emptyState(svg, W, H); return; }
     var mx = 0;
     bars.forEach(function(b){ if (b.dn+b.up > mx) mx = b.dn+b.up; });
+    if (mx <= 0) mx = 1;   // 空月份 / 空时段：给个占位刻度，避免后面除以 0
     var s2 = scaleUnit(mx, 'bytes');
     var st2 = niceStep(mx/s2.div, 12);
     var yM2 = (Math.floor(mx/s2.div/st2)+2)*st2;
@@ -660,6 +696,13 @@ function draw(){
         x:cx.toFixed(1), y:H-8, fill:'var(--muted2)', 'font-size':'9', 'text-anchor':'middle'
       })).textContent = b.label;
     });
+
+    // 天视图是 24 个小时柱，右边界补一个 24:00 收尾
+    if (mode === '1d'){
+      svg.appendChild(el('text', {
+        x:(P.l+iw).toFixed(1), y:H-8, fill:'var(--muted2)', 'font-size':'9', 'text-anchor':'end'
+      })).textContent = '24:00';
+    }
   }
 }
 
@@ -710,6 +753,7 @@ async function load(){
   var url = '/cgi-bin/traffic?mode='+mode;
   if (mode === 'year') url += '&y='+year;
   if (mode === '1d') url += '&d='+dayStr(dayOff);
+  if (mode === 'month') url += '&m='+monthStr(monthOff);
   try {
     var r = await fetch(url, {cache:'no-store'});
     var d = await r.json();
@@ -866,6 +910,7 @@ document.querySelectorAll('#btns button[data-m]').forEach(function(b){
     mode = b.dataset.m;
     document.getElementById('yearBox').style.display = (mode==='year') ? 'inline-flex' : 'none';
     document.getElementById('dayBox').style.display = (mode==='1d') ? 'inline-flex' : 'none';
+    document.getElementById('monthBox').style.display = (mode==='month') ? 'inline-flex' : 'none';
     document.querySelector('.head-actions').style.display = (mode==='3min') ? 'flex' : 'none';
     load(); setAuto();
   };
@@ -883,6 +928,12 @@ document.getElementById('dPrev').onclick = function(){
 };
 document.getElementById('dNext').onclick = function(){
   if (dayOff < 0){ dayOff++; dLabelSet(); load(); }
+};
+document.getElementById('mPrev').onclick = function(){
+  if (monthOff > -12){ monthOff--; mLabelSet(); load(); }
+};
+document.getElementById('mNext').onclick = function(){
+  if (monthOff < 0){ monthOff++; mLabelSet(); load(); }
 };
 
 (function initTheme(){
@@ -907,6 +958,7 @@ document.getElementById('btnLive').onclick = function(){
 
 document.getElementById('yLabel').textContent = year;
 dLabelSet();
+mLabelSet();
 load();
 setAuto();
 

@@ -495,19 +495,36 @@ function drawDay1d(svg, W, H, P, iw, ih){
   var X = function(h){ return P.l + iw*h/24; };
   var Y = function(v){ return P.t + ih - ih*(v/su.div)/yMax; };
 
+  // 只连接"有数据"的小时；中间断开（断电/重启）就另起一段，不要掉到 0
   var dnPts = [], upPts = [];
+  var prevHad = false;
   for (var h=0; h<=lastIdx; h++){
-    dnPts.push([X(h), Y(slots1d[h].rdn)]);
-    upPts.push([X(h), Y(slots1d[h].rup)]);
+    var sh = slots1d[h];
+    if (!sh || !sh.has){ prevHad = false; continue; }
+    var cmd = prevHad ? 'L' : 'M';
+    dnPts.push(cmd + X(h).toFixed(1) + ',' + Y(sh.rdn).toFixed(1));
+    upPts.push(cmd + X(h).toFixed(1) + ',' + Y(sh.rup).toFixed(1));
+    prevHad = true;
   }
   [['dn',dnPts],['up',upPts]].forEach(function(pair){
     if (!pair[1].length) return;
-    var d = pair[1].map(function(pt,i){ return (i?'L':'M')+pt[0].toFixed(1)+','+pt[1].toFixed(1); }).join('');
     svg.appendChild(el('path', {
-      d:d, fill:'none', stroke:'var(--'+pair[0]+')',
+      d:pair[1].join(''), fill:'none', stroke:'var(--'+pair[0]+')',
       'stroke-width':'1.8', 'stroke-linejoin':'round', 'stroke-linecap':'round'
     }));
   });
+
+  // 每个有数据的点都画实心圆：只有一个点时也能看见，不至于整张图空白像出错
+  for (var hd2=0; hd2<=lastIdx; hd2++){
+    var sd2 = slots1d[hd2];
+    if (!sd2 || !sd2.has) continue;
+    svg.appendChild(el('circle', {
+      cx:X(hd2).toFixed(1), cy:Y(sd2.rdn).toFixed(1), r:2.6, fill:'var(--dn)'
+    }));
+    svg.appendChild(el('circle', {
+      cx:X(hd2).toFixed(1), cy:Y(sd2.rup).toFixed(1), r:2.6, fill:'var(--up)'
+    }));
+  }
 
   _chartCtx = {
     is1d: true, last: lastIdx, Y: Y,

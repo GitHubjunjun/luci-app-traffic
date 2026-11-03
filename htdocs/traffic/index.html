@@ -169,11 +169,15 @@ function niceStep(range, target){
   else s = 10;
   return s*mag;
 }
+// 注意：传入的 v 已经是"显示单位"下的值（drawGrid 里 step/yMax 都已除过 div），
+// 这里绝对不能再除一次 su.div，否则 TB / Gbps / MB 档会全部错位。
 function fmtTick(v, su){
-  var x = v/su.div, s;
+  var x = v, s;
   if (Math.abs(x) >= 100) s = Math.round(x).toString();
   else if (Math.abs(x) >= 10) s = (Math.round(x*10)/10).toString().replace(/\.0$/,'');
-  else s = (Math.round(x*1000)/1000).toString().replace(/\.?0+$/,'');
+  else if (Math.abs(x) >= 1) s = (Math.round(x*100)/100).toString().replace(/\.?0+$/,'');
+  else s = (Math.round(x*1000)/1000).toString();
+  if (!s || s === '-0') s = '0';
   return s + ' ' + su.unit;
 }
 function pad2(x){ return x<10 ? '0'+x : ''+x; }

@@ -519,22 +519,48 @@ function themeColor(name, fallback){
   return v || fallback;
 }
 
+// 由主题色派生亮/暗两端（amt>0 提亮，amt<0 压暗），明暗主题自动适配
+function shade(hex, amt){
+  var h = String(hex).replace('#','');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return hex;
+  var n = parseInt(h,16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  var f = function(v){ return Math.round(amt > 0 ? v + (255-v)*amt : v*(1+amt)); };
+  return 'rgb('+f(r)+','+f(g)+','+f(b)+')';
+}
+function rectP(x,y,w,h){
+  return 'M'+x.toFixed(1)+','+(y+h).toFixed(1)+
+         'L'+x.toFixed(1)+','+y.toFixed(1)+
+         'L'+(x+w).toFixed(1)+','+y.toFixed(1)+
+         'L'+(x+w).toFixed(1)+','+(y+h).toFixed(1)+'Z';
+}
+function roundTop(x,y,w,h,r){
+  r = Math.min(r, w/2, h);
+  var x2=x+w, y2=y+h;
+  return 'M'+x.toFixed(1)+','+y2.toFixed(1)+
+         'L'+x.toFixed(1)+','+(y+r).toFixed(1)+
+         'Q'+x.toFixed(1)+','+y.toFixed(1)+' '+(x+r).toFixed(1)+','+y.toFixed(1)+
+         'L'+(x2-r).toFixed(1)+','+y.toFixed(1)+
+         'Q'+x2.toFixed(1)+','+y.toFixed(1)+' '+x2.toFixed(1)+','+(y+r).toFixed(1)+
+         'L'+x2.toFixed(1)+','+y2.toFixed(1)+'Z';
+}
+
 // 悬停时把当前柱高亮（其余淡化），一眼看出 tooltip 对应哪根
 function highlightBar(idx){
   if (!_chartCtx || !_chartCtx.barRects) return;
   var rs = _chartCtx.barRects;
   for (var i=0;i<rs.length;i++){
     var op = (i === idx) ? '1' : '0.55';
-    rs[i][0].setAttribute('opacity', op);
-    rs[i][1].setAttribute('opacity', op);
+    if (rs[i][0]) rs[i][0].setAttribute('opacity', op);
+    if (rs[i][1]) rs[i][1].setAttribute('opacity', op);
   }
 }
 function resetBarHighlight(){
   if (!_chartCtx || !_chartCtx.barRects) return;
   var rs = _chartCtx.barRects;
   for (var i=0;i<rs.length;i++){
-    rs[i][0].setAttribute('opacity', '1');
-    rs[i][1].setAttribute('opacity', '1');
+    if (rs[i][0]) rs[i][0].setAttribute('opacity', '1');
+    if (rs[i][1]) rs[i][1].setAttribute('opacity', '1');
   }
 }
 
@@ -666,24 +692,48 @@ function draw(){
     var gap = iw/n2;
     var bw = Math.max(2, gap*0.62);
 
+    var defsB = el('defs');
+    svg.appendChild(defsB);
+    var cDn = themeColor('--dn', '#3fb950'), cUp = themeColor('--up', '#d29922');
+
     var barRects = [];
     bars.forEach(function(b, i){
       var cx = P.l + gap*i + gap/2;
       var hDn = ih*(b.dn/s2.div)/yM2;
       var hUp = ih*(b.up/s2.div)/yM2;
       var yb = P.t + ih;
-      var rDn = el('rect', {
-        x:(cx-bw/2).toFixed(1), y:(yb-hDn).toFixed(1),
-        width:bw.toFixed(1), height:Math.max(0,hDn).toFixed(1), fill:'var(--dn)',
-        style:'transition:opacity .18s'
+      if (hDn + hUp <= 0){ barRects.push([null, null]); return; }  // 空柱保留柱位但不画
+      var x = cx - bw/2;
+      var topY = yb - hDn - hUp;
+      var rr = Math.min(4, bw/2, hDn + hUp);
+
+      // 方案 B：整根柱共用一段亮度渐变。userSpaceOnUse 让上下两段取同一 Y 尺度，
+      // 接缝处亮度连续，只有柱顶一个亮点，不破坏「一根柱 = 总流量」的语义
+      var idDn = 'gBarDn' + i, idUp = 'gBarUp' + i;
+      [[idDn, cDn], [idUp, cUp]].forEach(function(g){
+        var lg = el('linearGradient', {
+          id:g[0], gradientUnits:'userSpaceOnUse',
+          x1:'0', y1:topY.toFixed(1), x2:'0', y2:yb.toFixed(1)
+        });
+        lg.appendChild(el('stop', {offset:'0%', 'stop-color':shade(g[1], 0.24)}));
+        lg.appendChild(el('stop', {offset:'100%', 'stop-color':shade(g[1], -0.20)}));
+        defsB.appendChild(lg);
       });
-      var rUp = el('rect', {
-        x:(cx-bw/2).toFixed(1), y:(yb-hDn-hUp).toFixed(1),
-        width:bw.toFixed(1), height:Math.max(0,hUp).toFixed(1), fill:'var(--up)',
-        style:'transition:opacity .18s'
-      });
-      svg.appendChild(rDn); svg.appendChild(rUp);
-      barRects.push([rDn, rUp]);
+
+      var pDn = null, pUp = null;
+      if (hDn > 0){
+        // 有上行时下行保持直角，避免堆叠接缝露背景缝
+        var dDn = (hUp > 0) ? rectP(x, yb-hDn, bw, hDn)
+                            : roundTop(x, yb-hDn, bw, hDn, rr);
+        pDn = el('path', {d:dDn, fill:'url(#'+idDn+')', style:'transition:opacity .18s'});
+        svg.appendChild(pDn);
+      }
+      if (hUp > 0){
+        pUp = el('path', {d:roundTop(x, topY, bw, hUp, rr), fill:'url(#'+idUp+')',
+                          style:'transition:opacity .18s'});
+        svg.appendChild(pUp);
+      }
+      barRects.push([pDn, pUp]);
     });
     // 记录柱子引用，供悬停时高亮当前柱
     _chartCtx = { barRects: barRects };

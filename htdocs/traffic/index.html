@@ -347,14 +347,6 @@ function prepBars(){
   bars = daySlots;
 }
 
-function p95(arr){
-  if (!arr || !arr.length) return 0;
-  var a = arr.slice().sort(function(x,y){ return x-y; });
-  var idx = Math.floor(a.length * 0.95);
-  if (idx >= a.length) idx = a.length - 1;
-  return a[idx];
-}
-
 function applyStats(){
   var td=0, tu=0, span=1;
   var isLine = MODES[mode].type === 'line';
@@ -592,12 +584,15 @@ function draw(){
     var Y = function(v){ return P.t + ih - ih*(v/su.div)/yMax; };
     var yBase = P.t + ih;
 
-    // 淡黄绿面积渐变：两条线各自填到基线，上浓下淡
+    // 面积渐变：颜色由主题变量派生（与柱子、竖虚线同一套机制），
+    // 只靠 stop-opacity 做上浓下淡，保持柔和、不抢折线
     var defs = el('defs');
-    [['gAreaDn','#7fbf3f'],['gAreaUp','#c9d143']].forEach(function(g){
+    var aDn = themeColor('--dn', '#3fb950'), aUp = themeColor('--up', '#d29922');
+    [['gAreaDn', aDn], ['gAreaUp', aUp]].forEach(function(g){
+      var col = shade(g[1], 0.18);
       var lg = el('linearGradient', {id:g[0], x1:'0', y1:'0', x2:'0', y2:'1'});
-      lg.appendChild(el('stop', {offset:'0%', 'stop-color':g[1], 'stop-opacity':'0.22'}));
-      lg.appendChild(el('stop', {offset:'100%', 'stop-color':g[1], 'stop-opacity':'0.02'}));
+      lg.appendChild(el('stop', {offset:'0%', 'stop-color':col, 'stop-opacity':'0.20'}));
+      lg.appendChild(el('stop', {offset:'100%', 'stop-color':col, 'stop-opacity':'0.02'}));
       defs.appendChild(lg);
     });
 

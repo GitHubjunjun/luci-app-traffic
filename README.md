@@ -6,7 +6,7 @@
 [![LuCI](https://img.shields.io/badge/LuCI-JS%20API-1E90FF)](https://github.com/openwrt/luci)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**中文** | [English](reademe.en.md)
+**中文** | [English](README.en.md)
 
 ---
 

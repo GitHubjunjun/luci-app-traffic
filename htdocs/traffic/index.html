@@ -9,11 +9,13 @@
   --bg:#f6f8fa; --card:#ffffff; --text:#1f2328; --muted:#656d76; --muted2:#8b949e;
   --border:#d0d7de; --accent:#0969da;
   --dn:#1a7f37; --up:#9a6700; --grid:rgba(0,0,0,.08);
+  --tip-bg:rgba(255,255,255,.86);
 }
 html[data-theme="dark"]{
   --bg:#0d1117; --card:#161b22; --text:#e6edf3; --muted:#8b949e; --muted2:#6e7681;
   --border:#30363d; --accent:#58a6ff;
   --dn:#3fb950; --up:#d29922; --grid:rgba(255,255,255,.08);
+  --tip-bg:rgba(22,27,34,.86);
 }
 *{box-sizing:border-box}
 body{margin:0;padding:16px;background:var(--bg);color:var(--text);
@@ -43,10 +45,12 @@ button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .legend{display:flex;gap:16px;margin-bottom:6px;font-size:11px;color:var(--muted)}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
 svg{display:block;width:100%;height:250px}
-.tip{position:fixed;pointer-events:none;background:var(--card);border:1px solid var(--border);
+.tip{position:fixed;pointer-events:none;background:var(--tip-bg);border:1px solid var(--border);
   border-radius:6px;padding:7px 10px;font-size:11px;line-height:1.7;color:var(--text);
-  box-shadow:0 3px 12px rgba(0,0,0,.18);display:none;z-index:999;white-space:nowrap;
-  font-variant-numeric:tabular-nums}
+  box-shadow:0 3px 12px rgba(0,0,0,.22);display:none;z-index:999;white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+  backdrop-filter:blur(8px) saturate(1.15);-webkit-backdrop-filter:blur(8px) saturate(1.15);
+  text-shadow:0 1px 1px var(--card)}
 .tip .h{font-weight:600;margin-bottom:4px;color:var(--text)}
 .tip .r{display:flex;justify-content:space-between;gap:16px}
 .tip .r span:first-child{color:var(--muted)}
@@ -489,6 +493,23 @@ function el(tag, attrs){
   return e;
 }
 
+// Catmull-Rom 转三次贝塞尔：把折线磨圆，t 越小越贴近原始点、越不会过冲
+function smoothPath(pts){
+  if (!pts.length) return '';
+  if (pts.length === 1) return 'M' + pts[0][0].toFixed(1) + ',' + pts[0][1].toFixed(1);
+  var t = 0.18;
+  var d = 'M' + pts[0][0].toFixed(1) + ',' + pts[0][1].toFixed(1);
+  for (var i=0; i<pts.length-1; i++){
+    var p0 = pts[i-1] || pts[i], p1 = pts[i], p2 = pts[i+1], p3 = pts[i+2] || p2;
+    var c1x = p1[0] + (p2[0]-p0[0])*t, c1y = p1[1] + (p2[1]-p0[1])*t;
+    var c2x = p2[0] - (p3[0]-p1[0])*t, c2y = p2[1] - (p3[1]-p1[1])*t;
+    d += 'C' + c1x.toFixed(1) + ',' + c1y.toFixed(1) + ' ' +
+                c2x.toFixed(1) + ',' + c2y.toFixed(1) + ' ' +
+                p2[0].toFixed(1) + ',' + p2[1].toFixed(1);
+  }
+  return d;
+}
+
 // ---- 1 天视图：24 个小时槽，横轴 00:00 -> 24:00 ----
 function placeDots1d(h){
   if (!_chartCtx || !_chartCtx.is1d) return;
@@ -511,7 +532,7 @@ function highlightBar(idx){
   if (!_chartCtx || !_chartCtx.barRects) return;
   var rs = _chartCtx.barRects;
   for (var i=0;i<rs.length;i++){
-    var op = (i === idx) ? '1' : '0.25';
+    var op = (i === idx) ? '1' : '0.55';
     rs[i][0].setAttribute('opacity', op);
     rs[i][1].setAttribute('opacity', op);
   }
@@ -639,19 +660,44 @@ function draw(){
     var n = rows.length;
     var X = function(i){ return P.l + iw*i/(n-1); };
     var Y = function(v){ return P.t + ih - ih*(v/su.div)/yMax; };
+    var yBase = P.t + ih;
 
-    [['dn',dnA],['up',upA]].forEach(function(pair){
-      var d = pair[1].map(function(v,i){ return (i?'L':'M')+X(i).toFixed(1)+','+Y(v).toFixed(1); }).join('');
+    // 淡黄绿面积渐变：两条线各自填到基线，上浓下淡
+    var defs = el('defs');
+    [['gAreaDn','#7fbf3f'],['gAreaUp','#c9d143']].forEach(function(g){
+      var lg = el('linearGradient', {id:g[0], x1:'0', y1:'0', x2:'0', y2:'1'});
+      lg.appendChild(el('stop', {offset:'0%', 'stop-color':g[1], 'stop-opacity':'0.22'}));
+      lg.appendChild(el('stop', {offset:'100%', 'stop-color':g[1], 'stop-opacity':'0.02'}));
+      defs.appendChild(lg);
+    });
+    svg.appendChild(defs);
+
+    // 悬停列的竖虚线（黄绿中间色），压在面积下方
+    var vline = el('line', {
+      x1:0, y1:P.t, x2:0, y2:yBase,
+      stroke:'#a8c93a', 'stroke-width':'1.2', 'stroke-dasharray':'4 4',
+      opacity:0, 'pointer-events':'none'
+    });
+    svg.appendChild(vline);
+
+    [['dn',dnA,'gAreaDn'],['up',upA,'gAreaUp']].forEach(function(pair){
+      var pts = pair[1].map(function(v,i){ return [X(i), Y(v)]; });
+      if (pts.length < 2) return;
+      var d = smoothPath(pts);
+      var area = d + 'L' + pts[pts.length-1][0].toFixed(1) + ',' + yBase.toFixed(1) +
+                     'L' + pts[0][0].toFixed(1) + ',' + yBase.toFixed(1) + 'Z';
+      svg.appendChild(el('path', {d:area, fill:'url(#'+pair[2]+')', stroke:'none', 'pointer-events':'none'}));
       svg.appendChild(el('path', {
         d:d, fill:'none', stroke:'var(--'+pair[0]+')',
-        'stroke-width':'1.8', 'stroke-linejoin':'round', 'stroke-linecap':'round'
+        'stroke-width':'1.9', 'stroke-linejoin':'round', 'stroke-linecap':'round',
+        'pointer-events':'none'
       }));
     });
 
     _chartCtx = {
-      X: X, Y: Y, dnA: dnA, upA: upA,
-      dotDn: el('circle', {cx:0, cy:0, r:4.5, fill:'var(--dn)', stroke:'var(--card)', 'stroke-width':2, opacity:0, 'pointer-events':'none'}),
-      dotUp: el('circle', {cx:0, cy:0, r:4.5, fill:'var(--up)', stroke:'var(--card)', 'stroke-width':2, opacity:0, 'pointer-events':'none'})
+      X: X, Y: Y, dnA: dnA, upA: upA, vline: vline,
+      dotDn: el('circle', {cx:0, cy:0, r:3.2, fill:'var(--dn)', stroke:'var(--card)', 'stroke-width':1.5, opacity:0, 'pointer-events':'none'}),
+      dotUp: el('circle', {cx:0, cy:0, r:3.2, fill:'var(--up)', stroke:'var(--card)', 'stroke-width':1.5, opacity:0, 'pointer-events':'none'})
     };
     svg.appendChild(_chartCtx.dotDn);
     svg.appendChild(_chartCtx.dotUp);
@@ -667,6 +713,9 @@ function draw(){
       _chartCtx.dotUp.setAttribute('cx', hx.toFixed(1));
       _chartCtx.dotUp.setAttribute('cy', Y(upA[hidx]).toFixed(1));
       _chartCtx.dotUp.setAttribute('opacity', 1);
+      vline.setAttribute('x1', hx.toFixed(1));
+      vline.setAttribute('x2', hx.toFixed(1));
+      vline.setAttribute('opacity', 0.85);
     }
 
     var lbls = rows.map(function(r, i){
@@ -746,7 +795,8 @@ function drawGrid(svg, W, H, P, iw, ih, yMax, step, su){
     var y = P.t + ih - ih*(v/yMax);
     svg.appendChild(el('line', {
       x1:P.l, x2:W-P.r, y1:y.toFixed(1), y2:y.toFixed(1),
-      stroke:'var(--grid)', 'stroke-width':'1'
+      stroke:'var(--grid)', 'stroke-width':'1',
+      'stroke-dasharray':'3 6', opacity:'0.5'
     }));
     svg.appendChild(el('text', {
       x:P.l-8, y:(y+3.5).toFixed(1), fill:'var(--muted)', 'font-size':'10', 'text-anchor':'end'
@@ -768,7 +818,8 @@ function emptyState(svg, W, H){
     var y = P.t + ih - ih*(v/yMax);
     svg.appendChild(el('line', {
       x1:P.l, x2:W-P.r, y1:y.toFixed(1), y2:y.toFixed(1),
-      stroke:'var(--grid)', 'stroke-width':'1'
+      stroke:'var(--grid)', 'stroke-width':'1',
+      'stroke-dasharray':'3 6', opacity:'0.5'
     }));
     svg.appendChild(el('text', {
       x:P.l-8, y:(y+3.5).toFixed(1), fill:'var(--muted)', 'font-size':'10', 'text-anchor':'end'
@@ -821,30 +872,6 @@ function refreshTip(){
   var PL = 92, PR = 14;
   var iw = W - PL - PR;
 
-  if (mode === '1d'){
-    var lastD = (_chartCtx && _chartCtx.is1d && _chartCtx.last !== undefined) ? _chartCtx.last : 23;
-    var hd = Math.round((mouseVx - PL)/iw*24 - 0.5);
-    if (hd < 0) hd = 0;
-    if (hd > lastD) hd = lastD;
-    var sd = slots1d[hd];
-    if (!sd || !sd.has){ tip.style.display = 'none'; return; }
-    tip.innerHTML =
-      '<div class="h">' + pad2(hd) + ':00 - ' + pad2(hd+1) + ':00</div>' +
-      '<div class="r"><span>下行</span><span class="dn">' + fmtR(sd.rdn) + '<br>' + fmtB(sd.dn) + '</span></div>' +
-      '<div class="r"><span>上行</span><span class="up">' + fmtR(sd.rup) + '<br>' + fmtB(sd.up) + '</span></div>' +
-      '<div class="hr"></div>' +
-      '<div class="r"><span>合计</span><span>' + fmtB(sd.dn+sd.up) + '</span></div>';
-    placeDots1d(hd);
-    tip.style.display = 'block';
-    var tw1 = tip.offsetWidth;
-    var tx1 = mouseCx + 14;
-    if (tx1 + tw1 > window.innerWidth - 8) tx1 = mouseCx - tw1 - 14;
-    if (tx1 < 4) tx1 = 4;
-    tip.style.left = tx1 + 'px';
-    tip.style.top = (mouseCy - 14) + 'px';
-    return;
-  }
-
   var isLine = MODES[mode].type === 'line';
   var n = isLine ? rows.length : bars.length;
   if (n < 1){ tip.style.display = 'none'; return; }
@@ -888,6 +915,11 @@ function refreshTip(){
       _chartCtx.dotUp.setAttribute('cx', cxp.toFixed(1));
       _chartCtx.dotUp.setAttribute('cy', _chartCtx.Y(_chartCtx.upA[idx]).toFixed(1));
       _chartCtx.dotUp.setAttribute('opacity', 1);
+      if (_chartCtx.vline){
+        _chartCtx.vline.setAttribute('x1', cxp.toFixed(1));
+        _chartCtx.vline.setAttribute('x2', cxp.toFixed(1));
+        _chartCtx.vline.setAttribute('opacity', 0.85);
+      }
     }
   } else {
     if (_chartCtx && _chartCtx.dotDn){
@@ -938,6 +970,7 @@ function refreshTip(){
       _chartCtx.dotDn.setAttribute('opacity', 0);
       _chartCtx.dotUp.setAttribute('opacity', 0);
     }
+    if (_chartCtx && _chartCtx.vline) _chartCtx.vline.setAttribute('opacity', 0);
   });
 })();
 

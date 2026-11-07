@@ -8,13 +8,16 @@
 :root{
   --bg:#f6f8fa; --card:#ffffff; --text:#1f2328; --muted:#656d76; --muted2:#8b949e;
   --border:#d0d7de; --accent:#0969da;
-  --dn:#1a7f37; --up:#9a6700; --grid:rgba(0,0,0,.08);
+  --dn:#16a34a; --up:#ea580c; --grid:rgba(0,0,0,.08);
+  /* 文字用深一档，保证 11px 小字在白底上仍达 4.5:1；图形继续用鲜亮主色 */
+  --dn-ink:#15803d; --up-ink:#c2410c;
   --tip-bg:rgba(255,255,255,.74);
 }
 html[data-theme="dark"]{
   --bg:#0d1117; --card:#161b22; --text:#e6edf3; --muted:#8b949e; --muted2:#6e7681;
   --border:#30363d; --accent:#58a6ff;
   --dn:#3fb950; --up:#d29922; --grid:rgba(255,255,255,.08);
+  --dn-ink:var(--dn); --up-ink:var(--up);
   --tip-bg:rgba(22,27,34,.74);
 }
 *{box-sizing:border-box}
@@ -41,7 +44,7 @@ button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
 .k{font-size:11px;color:var(--muted);margin-bottom:5px}
 .v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.55}
-.dn{color:var(--dn)} .up{color:var(--up)}
+.dn{color:var(--dn-ink)} .up{color:var(--up-ink)}
 .legend{display:flex;gap:16px;margin-bottom:6px;font-size:11px;color:var(--muted)}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
 svg{display:block;width:100%;height:250px}
@@ -55,7 +58,7 @@ svg{display:block;width:100%;height:250px}
 .tip .r{display:flex;justify-content:space-between;gap:16px}
 .tip .r span:first-child{color:var(--muted)}
 .tip .hr{height:1px;background:var(--border);margin:5px 0}
-.tip .dn{color:var(--dn)} .tip .up{color:var(--up)}
+.tip .dn{color:var(--dn-ink)} .tip .up{color:var(--up-ink)}
 </style>
 </head>
 <body>

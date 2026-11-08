@@ -546,6 +546,7 @@ function highlightBar(idx){
     var op = (i === idx) ? '1' : '0.55';
     if (rs[i][0]) rs[i][0].setAttribute('opacity', op);
     if (rs[i][1]) rs[i][1].setAttribute('opacity', op);
+    if (rs[i][2]) rs[i][2].setAttribute('opacity', op);
   }
 }
 function resetBarHighlight(){
@@ -554,6 +555,7 @@ function resetBarHighlight(){
   for (var i=0;i<rs.length;i++){
     if (rs[i][0]) rs[i][0].setAttribute('opacity', '1');
     if (rs[i][1]) rs[i][1].setAttribute('opacity', '1');
+    if (rs[i][2]) rs[i][2].setAttribute('opacity', '1');
   }
 }
 
@@ -698,7 +700,7 @@ function draw(){
       var hDn = ih*(b.dn/s2.div)/yM2;
       var hUp = ih*(b.up/s2.div)/yM2;
       var yb = P.t + ih;
-      if (hDn + hUp <= 0){ barRects.push([null, null]); return; }  // 空柱保留柱位但不画
+      if (hDn + hUp <= 0){ barRects.push([null, null, null]); return; }  // 空柱保留柱位但不画
       var x = cx - bw/2;
       var topY = yb - hDn - hUp;
       var rr = Math.min(4, bw/2, hDn + hUp);
@@ -731,7 +733,16 @@ function draw(){
                           style:'transition:opacity .18s'});
         svg.appendChild(pUp);
       }
-      barRects.push([pDn, pUp]);
+      // 整柱统一轮廓：上下两段色相差异大，缩小看时人眼对红/蓝边界的定位有偏差，
+      // 会误以为两段错位。一条连续外框把两段框成单一物体，消除这种分组错觉
+      var pOutline = el('path', {
+        d: roundTop(x, topY, bw, hDn + hUp, rr),
+        fill:'none', stroke:'var(--muted)', 'stroke-width':'0.8',
+        'stroke-opacity':'0.38', 'stroke-linejoin':'round',
+        'pointer-events':'none', style:'transition:opacity .18s'
+      });
+      svg.appendChild(pOutline);
+      barRects.push([pDn, pUp, pOutline]);
     });
     // 记录柱子引用，供悬停时高亮当前柱
     _chartCtx = { barRects: barRects };

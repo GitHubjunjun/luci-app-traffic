@@ -9,7 +9,7 @@
   --bg:#f6f8fa; --card:#ffffff; --text:#1f2328; --muted:#656d76; --muted2:#8b949e;
   --border:#d0d7de; --accent:#0969da;
   /* 数据色只有一套，深浅主题共用；只有界面底色与文字随主题切换 */
-  --dn:#6366f1; --up:#db2777; --grid:rgba(0,0,0,.08);
+  --dn:#0f7f9c; --up:#8854e8; --grid:rgba(0,0,0,.08);
   --tip-bg:rgba(255,255,255,.74);
 }
 html[data-theme="dark"]{
@@ -588,7 +588,7 @@ function draw(){
     // 面积渐变：颜色由主题变量派生（与柱子、竖虚线同一套机制），
     // 只靠 stop-opacity 做上浓下淡，保持柔和、不抢折线
     var defs = el('defs');
-    var aDn = themeColor('--dn', '#6366f1'), aUp = themeColor('--up', '#db2777');
+    var aDn = themeColor('--dn', '#0f7f9c'), aUp = themeColor('--up', '#8854e8');
     [['gAreaDn', aDn], ['gAreaUp', aUp]].forEach(function(g){
       var col = shade(g[1], 0.18);
       var lg = el('linearGradient', {id:g[0], x1:'0', y1:'0', x2:'0', y2:'1'});
@@ -600,7 +600,7 @@ function draw(){
     // 悬停竖虚线的渐变：顶部渐入 → 上行黄 → 下行绿，颜色跟随主题变量
     // userSpaceOnUse 是必需的：垂直线的 objectBoundingBox 宽度为 0，默认渐变不会渲染
     var vTop = P.t + ih*0.06;
-    var cUp = themeColor('--up', '#db2777'), cDn = themeColor('--dn', '#6366f1');
+    var cUp = themeColor('--up', '#8854e8'), cDn = themeColor('--dn', '#0f7f9c');
     var vg = el('linearGradient', {
       id:'gVline', gradientUnits:'userSpaceOnUse',
       x1:'0', y1:vTop.toFixed(1), x2:'0', y2:yBase.toFixed(1)
@@ -690,7 +690,7 @@ function draw(){
 
     var defsB = el('defs');
     svg.appendChild(defsB);
-    var cDn = themeColor('--dn', '#6366f1'), cUp = themeColor('--up', '#db2777');
+    var cDn = themeColor('--dn', '#0f7f9c'), cUp = themeColor('--up', '#8854e8');
 
     var barRects = [];
     bars.forEach(function(b, i){

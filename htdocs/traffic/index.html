@@ -712,7 +712,9 @@ function draw(){
           x1:'0', y1:topY.toFixed(1), x2:'0', y2:yb.toFixed(1)
         });
         lg.appendChild(el('stop', {offset:'0%', 'stop-color':shade(g[1], 0.24)}));
-        lg.appendChild(el('stop', {offset:'100%', 'stop-color':shade(g[1], -0.10)}));
+        // 暗端保持主色、不再压暗：压暗后底部蓝段在深底上对比仅 ~3.5，
+        // 抗锯齿边缘融进背景显得比粉段窄，视觉上会误以为粉段偏左
+        lg.appendChild(el('stop', {offset:'100%', 'stop-color':g[1]}));
         defsB.appendChild(lg);
       });
 
